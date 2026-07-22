@@ -1,9 +1,13 @@
-#!/usr/bin/python3
+#!/usr/bin/python3.11
 
+import logging
 import numpy as np
 import random
 from scipy.optimize import differential_evolution, minimize
 from time import process_time,perf_counter
+
+msg = logging.getLogger(__name__)
+msg.setLevel(logging.INFO)
 
 
 class _OperatorNormResult:
@@ -24,9 +28,54 @@ class _OperatorNormResult:
         self.message=message
         self.exception=exception
 
-    def __bool__(self):
-        return self.success and not np.isnan(self.norm)
+    def transpose(self):
+        x = self.x
+        self.x = self.y
+        self.y = x
+        p = self.p
+        self.p = hoelder(self.q)
+        self.q = hoelder(p)
+        self.method_variant +=",adjoint"
 
+    adjoint = transpose
+    
+    def __bool__(self):
+        # return self.success and not np.isnan(self.norm)
+        ### some methods return value even with a problem like
+        ### maxiter exceeded. Don't check for success, just whether
+        ### there is a numeric value.
+        return not np.isnan(self.norm)
+    
+    def __lt__(self,other):
+        s = -np.inf if not self  else self.norm
+        o = -np.inf if not other else other.norm
+        return s < o
+    
+    def __le__(self,other):
+        s = -np.inf if not self  else self.norm
+        o = -np.inf if not other else other.norm
+        return s <= o
+    
+    def __gt__(self,other):
+        s = -np.inf if not self  else self.norm
+        o = -np.inf if not other else other.norm
+        return s > o
+    
+    def __ge__(self,other):
+        s = -np.inf if not self  else self.norm
+        o = -np.inf if not other else other.norm
+        return s >= o
+    
+    def __eq__(self,other):
+        s = -np.inf if not self  else self.norm
+        o = -np.inf if not other else other.norm
+        return s == o
+    
+    def __ne__(self,other):
+        s = -np.inf if not self  else self.norm
+        o = -np.inf if not other else other.norm
+        return s != o
+    
     def __repr__(self):
         if self.success and not np.isnan(self.norm):
             status = "successful"
@@ -61,12 +110,6 @@ class _FailedOperatorNormResult(_OperatorNormResult):
         self.message = message
         self.exception=exception
 
-def sortresultskey(result):
-    if  not result.success or np.isnan(result.norm):
-        return -np.inf
-    return result.norm
-        
-
 def vectornorm(x,p):
     return sum(np.power(x,p))**(1/p)
 
@@ -86,27 +129,57 @@ def matrix_data(M):
     entries = set(M.reshape( (h*w,) ))
     
     if not (entries == {0,1} or entries == {1,} ):
-        raise ValueError(message+"\n It contains non-zero/one entries.")
+        msg.critical("Matrix contains non-zero/one entries")
+        raise ValueError(message+"\n It contains non-zero/one entries")
 
-    u = np.ones(h,dtype=np.uint8)
+    u = np.ones(h,dtype=np.uint32)
     degrees = set(u@M)
     if len(degrees) != 1:
-        raise ValueError(message+"\n Left degree is not constant.")
-    d1 = degrees.pop()
+        msg.critical("Matrix left degree is not constant")
+        raise ValueError(message+"\n Left degree is not constant")
+    d1 = int(degrees.pop())
 
-    u = np.ones(w,dtype=np.uint8)
+    u = np.ones(w,dtype=np.uint32)
     degrees = set(M@u)
     if len(degrees) != 1:
+        msg.critical("Matrix right degree is not constant")
         raise ValueError(message+"\n Right degree is not constant.")
-    d2 = degrees.pop()
+    d2 = int(degrees.pop())
             
     return (h, w, d1, d2)
 
-def _operatornorm_exact(M,p,q):
+
+
+def operatornorm_minimal(M,p,q):
 
     cpu_start  = process_time()
     real_start = perf_counter()
+    ### TODO: check params
     
+    msg.debug("Trying method minimal")
+    h, w, d1, d2 = matrix_data(M)
+    
+    norm = max( d1 * w**(1-1/p) / (h**(1-1/q)), 
+                d2**(1-1/p),
+                d1**(1/q)                    )
+    
+    return _OperatorNormResult(norm = norm,
+                               x = None, y = None,
+                               p = p, q = q,
+                               method = "minimal",
+                               success = True, 
+                               iterations = 1,
+                               message = "Lower bound from operatornorm_minimal",
+                               cpu_time  = process_time() - cpu_start,
+                               real_time = perf_counter() - real_start)
+
+def operatornorm_exact(M,p,q):
+
+    cpu_start  = process_time()
+    real_start = perf_counter()
+    ### TODO: check params
+    
+    msg.debug("Trying method exact")
     h, w, d1, d2 = matrix_data(M)
     p_prime = hoelder(p)
     q_prime = hoelder(q)
@@ -116,6 +189,7 @@ def _operatornorm_exact(M,p,q):
         x = np.zeros(w,dtype=np.uint)
         x[0] = 1
         y = M @ x ### no need to find resonance, since all coords are 0,1
+        msg.debug(f"Value: {norm}")
         return _OperatorNormResult(norm = norm,
                                    x = x, y = y,
                                    p = p, q = q,
@@ -129,6 +203,7 @@ def _operatornorm_exact(M,p,q):
         norm = d2 * (h**(1/q)),
         x = np.ones(w,dtype=np.uint)
         y = np.ones(h,dtype=np.uint)
+        msg.debug(f"Value: {norm}")
         return _OperatorNormResult(norm = norm,
                                    x = x, y = y,
                                    p = p, q = q,
@@ -143,6 +218,7 @@ def _operatornorm_exact(M,p,q):
         norm = d1 * (w**(1/p_prime))
         x = np.ones(w,dtype=np.uint)
         y = np.ones(h,dtype=np.uint)
+        msg.debug(f"Value: {norm}")
         return _OperatorNormResult(norm = norm,
                                    x = x, y = y,
                                    p = p, q = q,
@@ -158,6 +234,7 @@ def _operatornorm_exact(M,p,q):
         y = np.zeros(h,dtype=np.uint)
         y[0] = 1
         x =y @ M ### no need to find resonance, since all coords are 0,1
+        msg.debug(f"Value: {norm}")
         return _OperatorNormResult(norm = norm,
                                    x = x, y = y,
                                    p = p, q = q,
@@ -172,6 +249,7 @@ def _operatornorm_exact(M,p,q):
         norm = d2 * (h**(1/q)) / (w**(1/p))
         x = np.ones(w,dtype=np.uint)
         y = np.ones(h,dtype=np.uint)
+        msg.debug(f"Value: {norm}")
         return _OperatorNormResult(norm = norm,
                                    x = x, y = y,
                                    p = p, q = q,
@@ -182,13 +260,36 @@ def _operatornorm_exact(M,p,q):
                                    cpu_time  = process_time() - cpu_start,
                                    real_time = perf_counter() - real_start)
     
+    msg.error(f"Exact method failed")
     return _FailedOperatorNormResult(method="exact",p=p,q=q,
                                      message=f"Can not use exact method for p={p}, q={q}")
-       
-def _operatornorm_power(M, p, q,
-                        start_x,
-                        epsilon=1e-15,
-                        maxiter=10000):
+_rng = np.random.default_rng()
+
+def _get_start_x(start_x,length):
+    if not isinstance(start_x,str):
+        return ( start_x, "custom" )
+    
+    start_x = start_x.lower().strip()
+    
+    if start_x in {"random","rand", "rnd","r"}:
+        return ( np.abs(_rng.normal(size=length)), "random" )
+    
+    if start_x in {"coordrnd", "coordrand", "cr", "coordrandom", "crandom" }:
+        x = np.zeros(length,dtype=np.float64)
+        x[_rng.choice(length)] = 1
+        return (x, "crandom" )
+    
+    if start_x in {"u", "unif", "uniform" }:
+        return (np.ones(length,dtype=np.float64), "crandom" )
+
+    message = f"Do not understand start_x={start_x}" 
+    msg.critical(message)
+    raise ValueError(message)
+
+def operatornorm_power(M, p, q,
+                       start_x,
+                       epsilon=1e-15,
+                       maxiter=10000):
     """Evaluates (p,q) norm of M using power method starting from x=start.
        Iterations stop when relative improvement is less then epsilon
        or after maxiter iterations.  
@@ -196,68 +297,113 @@ def _operatornorm_power(M, p, q,
        Return a tuple (norm, iterations,resonance_x,resonance_y)
     """
 
+    ### I will use ell^infty normalization on every step. It seems sensible. 
     cpu_start  = process_time()
     real_start = perf_counter()
 
-    ### Don't do checks for privite functions
+    ### TODO: check params
+
+    x, variant = _get_start_x( start_x, M.shape[1] )
+                  
+    msg.debug(f"Trying method power({variant})")
     if p in {1,np.inf} or q in {1,np.inf}:
+        msg.error(f"Power method does not work for (p,q)=({p}.{q}")
         return _FailedOperatorNormResult( p = p, q = q,
                                           method = "power",
+                                          method_variant = variant,
                                           message = "can not use this method for p or q == np.inf or 1")
 
     message = ""
     Mstar = np.transpose(M)
     p_prime = hoelder(p)
-    x = start_x/vectornorm(start_x,p)
+    q_prime = hoelder(q)
+
+    ### Because there are big powers we keep 0 <= x <= 1, as close to
+    ### 1 as possible
+    x = x/np.max(x)
 
     norm_prev = -1 # make sure at least one iteration happens
     y1 = M @ x
-    norm = vectornorm(y1,q)
-    y = np.power(y1,q-1) ### resonating to y
-    x1 = Mstar @ y     ### push back
-    x2 = np.power(x1, p_prime-1) ### resonating to x2
-    x = x2 / vectornorm(x2,p) ### normalize
+    norm = vectornorm(y1,q)/vectornorm(x,p)
 
     i=0
 
+    ### compare on log scale
     while (norm - norm_prev)/norm > epsilon:
         norm_prev = norm
-        y = np.power(y1,q-1)
+
+        ### q could be very large. So we try to ell^infty-renormalize
+        ### y1 so that thing don't go out of control
+        y2 = y1/np.max(y1)
+        y = np.power(y2,q-1)
         x1 = Mstar @ y
-        x2 = np.power(x1,p_prime - 1)
-        x = x2 / vectornorm(x2,p)
+        ### ell^infty renormalize x1 in case p_prime is big
+        x2 = x1/np.max(x1)
+        x = np.power(x2,p_prime - 1)
         y1 = M @ x
-        norm = vectornorm(y1,q)
-        # print(i,norm,norm_prev)
+        norm = vectornorm(y1,q)/vectornorm(x,p)
         i += 1
+        msg.debug(f"{i:>4}. Norm:{norm}")
+        # breakpoint()
         if i > maxiter:
+            ### keep the message to use it in the result.
             message = f"Number of iterations exceeded maxiter={maxiter}"
-            print(message)
-            break
+            msg.warning(message)
+            msg.debug(f"Value: {norm}")
+            ### prepare y for the result
+            y2 = y1/np.max(y1)
+            y  = np.power(y2,q-1)
+            return _OperatorNormResult( norm = norm,
+                                        x = x, y = y,
+                                        p = p, q = q,
+                                        method = "power",
+                                        method_variant = variant,
+                                        success = False,
+                                        iterations = i,
+                                        message = message,
+                                        cpu_time  = process_time() - cpu_start,
+                                        real_time = perf_counter() - real_start)
+
+    if np.isnan(norm):
+        message = "Calculation failed, got nan. Probably because exponents are too big"
+    else:
+        message = "Optimization terminated successfully."
+    msg.debug(f"Value: {norm}")
+    ### prepare y for the result
+    y2 = y1/np.max(y1)
+    y  = np.power(y2,q-1)
         
-    y = np.power(y1,q-1)
-    message = "Optimization terminated successfully."
     return _OperatorNormResult( norm = norm,
                                 x = x, y = y,
                                 p = p, q = q,
                                 method = "power",
-                                success = True,
+                                method_variant = variant,
+                                success = not np.isnan(norm),
                                 iterations = i,
                                 message = message,
                                 cpu_time  = process_time() - cpu_start,
                                 real_time = perf_counter() - real_start)
     
-def _operatornorm_slsqp(M, p, q,
+def operatornorm_slsqp(M, p, q,
                         start_x,
                         epsilon=1e-15,
                         maxiter=3000):
     
     cpu_start  = process_time()
     real_start = perf_counter()
+    
+    x, variant = _get_start_x( start_x, M.shape[1] )
+    x = x/vectornorm(x,p)
+    
+    msg.debug(f"Trying method power({variant})")
+
     if p == np.inf or q == np.inf:
+        msg.error(f"Slspq method does not work for (p,q)=({p},{q}")
         return _FailedOperatorNormResult( p = p, q = q,
                                           method = "slsqp",
+                                          method_variant = variant,
                                           message = "can not use this method for p or q = np.inf")
+    
     def objective(x):
         return -vectornorm(M @ x, q)
 
@@ -268,8 +414,6 @@ def _operatornorm_slsqp(M, p, q,
         "type": "eq",
         "fun": constraint,
     }
-
-    x = start_x/vectornorm(start_x,p)
 
     result = minimize(objective, x, 
                       method="SLSQP",
@@ -283,10 +427,13 @@ def _operatornorm_slsqp(M, p, q,
     y1 = M @ x
     norm = vectornorm(y1, q)
     y = np.power(y1, q-1)
+
+    msg.debug(f"Value: {norm}")
     return _OperatorNormResult(norm = norm,
                                x = x, y = y,
                                p = p, q = q,
                                method = "slsqp",
+                               method_variant = variant,
                                success = result.success,
                                iterations = result.nit,
                                message = result.message,
@@ -294,14 +441,14 @@ def _operatornorm_slsqp(M, p, q,
                                real_time = perf_counter() - real_start)
 
     
-def _operatornorm_differential_evolution(M, p, q,
-                                         popsize=5,
+def operatornorm_differential_evolution(M, p, q,
+                                         popsize=10,
                                          epsilon=1e-15,
                                          workers=1,
-                                         maxiter=1000):
+                                         maxiter=5000):
     cpu_start  = process_time()
     real_start = perf_counter()
-
+    msg.debug(f"Trying method diff_evo(popsize={popsize})")
     h, w = M.shape
     
     def objective(x):
@@ -313,7 +460,7 @@ def _operatornorm_differential_evolution(M, p, q,
         return -vectornorm(M @ x, q) / denominator
     
     result = differential_evolution(objective,
-                                    bounds=[(0.1, 1.0)] * w,
+                                    bounds=[(0.0, 1.0)] * w,
                                     maxiter=maxiter,
                                     popsize=popsize,
                                     tol=epsilon,
@@ -325,6 +472,7 @@ def _operatornorm_differential_evolution(M, p, q,
     y1 = M @ x
     norm = vectornorm(y1, q)
     y = np.power(y1,q-1)
+    msg.debug(f"Value: {norm}")
     return _OperatorNormResult(norm = norm,
                                x = x, y = y,
                                p = p, q = q,
@@ -334,89 +482,5 @@ def _operatornorm_differential_evolution(M, p, q,
                                iterations = result.nit,
                                message = result.message,
                                cpu_time  = process_time() - cpu_start,
-                               real_time = perf_counter() - real_start)
+                               real_time = perf_counter() - real_start )
 
-def _parse_method(method):
-    method = method.replace("("," ").replace(")"," ").replace(","," ").replace("|"," ").replace("."," ")
-    mv = method.split()
-    if len(mv) >= 2:
-        if mv[0] == "differential_evolution":
-            return [ "differential_evolution", int(mv[1]) ]
-        return mv[:2]
-    if len(mv) == 1:
-        m = mv.pop()
-        if m in {"power", "slsqp"}:
-            return [m, "random"]
-        if m == "exact":
-            return ["exact",""]
-        if m == "differential_evolution":
-            return ["differential_evolution", 10]
-        return [m, ""]
-    if len(mv) == 0:
-        return ["power", "random"]
-    
-def operatornorm(M,p,q,epsilon=1E-15,
-                 methods = ["exact"] +
-                           ["power uniform", "power coordinate"] +
-                           ["power random",] * 10 +
-                           ["slsqp uniform", "slsqp coordinate"] +
-                           ["slsqp random",] * 10 + ["differential_evolution 10"]
-                ):
-
-    """Evaluate ||M||_{p->q}.
-    epsilon -- the precision level
-    
-
-    returns list of results sorted by the decreasing value of the norm
-    """
-    
-    if isinstance(methods,str):
-        methods = [methods]
-        
-    h, w = M.shape
-    results = list()
-    
-    for method in methods:
-        method, variant = _parse_method(method)
-
-        ### prepare start vector
-        if method in {"power","slsqp"} and variant == "uniform":
-            start_x = np.ones(w,dtype=np.uint) ### not uint8 to avoid overflows
-        elif method in {"power","slsqp"} and variant == "coordinate":
-            start_x = np.zeros(w,dtype=np.uint)
-            start_x[random.randrange(w)] = 1
-        elif method in {"power","slsqp"} and variant == "random":
-            rng = np.random.default_rng()
-            start_x = np.abs(rng.normal(size=w))
-        elif method in {"exact","differential_evolution"}:
-            pass
-        else:
-            raise ValueError(f"I don't understand method {method}({variant})")
-
-        try:
-            print(f"Trying method {method}({variant})") 
-            if method == "exact":    
-                results.append(_operatornorm_exact(M,p,q))
-            elif method == "power":
-                result = _operatornorm_power(M,p,q,start_x)
-                result.method_variant=variant
-                results.append(result)
-            elif method == "slsqp":
-                result = _operatornorm_slsqp(M,p,q,start_x)
-                result.method_variant=variant
-                results.append(result)
-            elif method == "differential_evolution":
-                result = _operatornorm_differential_evolution(M,p,q,popsize=variant)
-                result.method_variant=f"{variant}"
-                results.append(result)
-            else:
-                print(f"Unknown method {method}")
-                results.append(_FailedOperatorNormResult(method=method,
-                                                         p=p,q=q,
-                                                         message=f"Unknown method {method}"))
-        except Exception as e:
-            results.append(_FailedOperatorNormResult(method=method,variant=variant,
-                                                     p=p,q=q,
-                                                     exception=e))
-    results.sort(key=sortresultskey,reverse=True)
-    return results

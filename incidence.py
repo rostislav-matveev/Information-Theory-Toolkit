@@ -1,8 +1,12 @@
-#!/usr/bin/python3
+#!/usr/bin/python3.11
 
+import logging
 import numpy as np
 from finite_fields import PrimeField
 from itertools import combinations, product
+
+msg = logging.getLogger(__name__)
+msg.setLevel(logging.INFO)
 
 ################################################################################
 ### Projective Flags
@@ -17,9 +21,6 @@ from itertools import combinations, product
 
 def relax(*args,**kwargs):
     pass
-
-# maybe_print = print
-maybe_print = relax
 
 def _get_point_indexFP2(i,j,k,F):
     """Return the index of the point with coordinates [i:j:k], in
@@ -58,91 +59,91 @@ def _incidence_proj_flags_v1(F):
     
     ### FIRST BATCH: [i:j:k]=[0:0:1]
     (i,j,k)=(0,0,1)
-    maybe_print("Point:",(i,j,k))
+    msg.debug("Point:",(i,j,k))
     n = _get_point_indexFP2(i,j,k,F)
-    maybe_print("\tn:",n)
+    msg.debug("\tn:",n)
     line0 = [0,1,0]
     line1 = [1,0,0]
-    maybe_print("\tL:",line1)
+    msg.debug("\tL:",line1)
     m = _get_point_indexFP2(*line1,F)
-    maybe_print("\tm:",m)
+    msg.debug("\tm:",m)
     M[n,m] = 1
     for t in F.range():
         line = [ c0 + c1*t for (c0,c1) in zip(line0,line1) ]
-        maybe_print("\tL:",line)
+        msg.debug("\tL:",line)
         m = _get_point_indexFP2(*line,F)
-        maybe_print("\tm:",m)
+        msg.debug("\tm:",m)
         M[n,m] = 1
 
     ### SECOND BATCH: [i:j:k]=[0:1:*]
     (i,j)=(0,1)
     for k in F.range():
-        maybe_print("P:",(i,j,k))
+        msg.debug("P:",(i,j,k))
         n = _get_point_indexFP2(i,j,k,F)
-        maybe_print("\tn:",n)
+        msg.debug("\tn:",n)
         line0 = [0, F.order - k, 1]
         line1 = [1,0,0]
-        maybe_print("\tL:",line1)
+        msg.debug("\tL:",line1)
         m = _get_point_indexFP2(*line1,F)
-        maybe_print("\tm:",m)
+        msg.debug("\tm:",m)
         M[n,m] = 1
         for t in F.range():
             line = [ c0 + c1*t for (c0,c1) in zip(line0,line1) ]
-            maybe_print("\tL:",line)
+            msg.debug("\tL:",line)
             m = _get_point_indexFP2(*line,F)
-            maybe_print("\tm:",m)
+            msg.debug("\tm:",m)
             M[n,m] = 1
 
     ### THIRD BATCH: [i:j:k] = [1:*:*]
     i = 1
     ### case 1 [1:0:0], 1 count
     (j,k) = (0,0)
-    maybe_print("P:",(i,j,k))
+    msg.debug("P:",(i,j,k))
     n = _get_point_indexFP2(i,j,k,F)
-    maybe_print("\tn:",n)
+    msg.debug("\tn:",n)
     line0 = (0,0,1)
     line1 = (0,1,0)
-    maybe_print("\tL:",line1)
+    msg.debug("\tL:",line1)
     m = _get_point_indexFP2(*line1,F)
-    maybe_print("\tm:",m)
+    msg.debug("\tm:",m)
     M[n,m] = 1
     for t in F.range():
         line = [ c0 + c1*t for (c0,c1) in zip(line0,line1) ]
-        maybe_print("\tL:",line)
+        msg.debug("\tL:",line)
         m = _get_point_indexFP2(*line,F)
-        maybe_print("\tm:",m)
+        msg.debug("\tm:",m)
         M[n,m] = 1
         
     ### case 2 [1:0:k], F.order-1 count
     j = 0
     for k in F.range(nonzero=True):
-        maybe_print("P:",(i,j,k))
+        msg.debug("P:",(i,j,k))
         n = _get_point_indexFP2(i,j,k,F)
-        maybe_print("\tn:",n)
+        msg.debug("\tn:",n)
         line0 = [0,1,0]
         line1 = [F.order-k,0,1]
-        maybe_print("\tL:",line1)
+        msg.debug("\tL:",line1)
         m = _get_point_indexFP2(*line1,F)
-        maybe_print("\tm:",m)
+        msg.debug("\tm:",m)
         M[n,m] = 1
         for t in F.range():
             line = [ c0 + c1*t for (c0,c1) in zip(line0,line1) ]
-            maybe_print("\tL:",line)
+            msg.debug("\tL:",line)
             m = _get_point_indexFP2(*line,F)
-            maybe_print("\tm:",m)
+            msg.debug("\tm:",m)
             M[n,m] = 1
             
     ### case 3: [1:j:k], (q-1)*q count
     for j in F.range(nonzero=True):
         for k in F.range():
-            maybe_print("P:",(i,j,k))
+            msg.debug("P:",(i,j,k))
             n = _get_point_indexFP2(i,j,k,F)
-            maybe_print("\tn:",n)
+            msg.debug("\tn:",n)
             line0 = [0,F.order-k,j]
             line1 = [j,F.order-k-1,j]
-            maybe_print("\tL:",line1)
+            msg.debug("\tL:",line1)
             m = _get_point_indexFP2(*line1,F)
-            maybe_print("\tm:",m)
+            msg.debug("\tm:",m)
             M[n,m] = 1
             for t in F.range():
                 line = [ c0 + c1*t for (c0,c1) in zip(line0,line1) ]
@@ -307,13 +308,14 @@ def incidence_lin_flags(k, l, n, F):
     ### TODO: Add tests
     dimGrk = gauss_choose(F.order, n, k)
     dimGrl = gauss_choose(F.order, n, l)
-    
+    msg.debug(f"Create {dimGrk}x{dimGrl} matrix of incidence for {k} in {l} in {n} flags over {F}")
     M = np.zeros((dimGrl, dimGrk),
                  dtype=np.uint8,  
                 )
     for i, K in enumerate(_subspaces(k,n,F)):
         for j, L in enumerate(_subspaces(l,n,F)):
             if _is_subspace(K, L, F):
+                msg.debug(f"[{i:>4},{j:>4}]")
                 M[j,i] = 1
 
     return M

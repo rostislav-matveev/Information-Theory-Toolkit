@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3.11
 
 ### TODO. Realize arbitrary finite field arithmetic
 
@@ -126,14 +126,14 @@ class PrimeField(type):
         }
 
         mcls._cache[key] = super().__new__(mcls,
-                                           f"GF({order})",
+                                           f"F_{order}",
                                            (_PrimeFieldElementBase,),
                                            namespace,
                                            )
         return mcls._cache[key]
     
     def __repr__(cls):
-        return f"GF({cls.order})"
+        return f"F_{cls.order}"
     
     __str__ = __repr__
 
